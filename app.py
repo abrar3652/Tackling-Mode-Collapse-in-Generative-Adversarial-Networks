@@ -261,10 +261,18 @@ dcgan_gen, wgan_gen, critic, status = load_all_models()
 losses = load_losses()
 
 c1, c2, c3, c4 = st.columns(4)
-with c1: st.success("✅ DCGAN loaded")    if status["dcgan"]  else st.warning("⚠️ DCGAN: random weights")
-with c2: st.success("✅ WGAN-GP loaded")  if status["wgan"]   else st.warning("⚠️ WGAN-GP: random weights")
-with c3: st.success("✅ Critic loaded")   if status["critic"] else st.info("ℹ️ Critic optional")
-with c4: st.success("✅ losses.pkl loaded") if losses         else st.warning("⚠️ losses.pkl not found")
+with c1:
+    if status["dcgan"]:  st.success("✅ DCGAN loaded")
+    else:                st.warning("⚠️ DCGAN: random weights")
+with c2:
+    if status["wgan"]:   st.success("✅ WGAN-GP loaded")
+    else:                st.warning("⚠️ WGAN-GP: random weights")
+with c3:
+    if status["critic"]: st.success("✅ Critic loaded")
+    else:                st.info("ℹ️ Critic optional")
+with c4:
+    if losses:           st.success("✅ losses.pkl loaded")
+    else:                st.warning("⚠️ losses.pkl not found")
 
 # ─────────────────────────────────────────────────────────────
 # TABS

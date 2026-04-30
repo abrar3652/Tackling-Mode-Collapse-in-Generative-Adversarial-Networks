@@ -95,7 +95,7 @@ class UNetGenerator(nn.Module):
 def load_generator():
     model = UNetGenerator(input_nc=3, output_nc=3, ngf=64).to(device)
     
-    checkpoint_path = "G_epoch45.pth"
+    checkpoint_path = "cyclegan_final_generators.pth"
     if not os.path.exists(checkpoint_path):
         st.error(f"❌ Model file `{checkpoint_path}` not found in the current directory.")
         st.stop()

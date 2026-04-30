@@ -1,12 +1,26 @@
+import streamlit as st
 import torch
 import torch.nn as nn
-import torchvision.utils as vutils
-import numpy as np
-import gradio as gr
 from PIL import Image
+import numpy as np
+import torchvision.transforms as transforms
+import os
 
-# ─── Model Architecture ───────────────────────────────────────────────────────
+# ====================== Page Config ======================
+st.set_page_config(
+    page_title="Anime Face GAN Demo",
+    page_icon="🎨",
+    layout="wide"
+)
 
+st.title("🎨 Anime Face Generator")
+st.markdown("**DCGAN vs WGAN-GP** — Tackling Mode Collapse")
+
+# ====================== Device ======================
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+st.sidebar.success(f"Device: **{device}**")
+
+# ====================== Generator Architecture ======================
 class Generator(nn.Module):
     def __init__(self):
         super(Generator, self).__init__()
@@ -14,15 +28,19 @@ class Generator(nn.Module):
             nn.ConvTranspose2d(100, 512, 4, 1, 0, bias=False),
             nn.BatchNorm2d(512),
             nn.ReLU(True),
+
             nn.ConvTranspose2d(512, 256, 4, 2, 1, bias=False),
             nn.BatchNorm2d(256),
             nn.ReLU(True),
+
             nn.ConvTranspose2d(256, 128, 4, 2, 1, bias=False),
             nn.BatchNorm2d(128),
             nn.ReLU(True),
+
             nn.ConvTranspose2d(128, 64, 4, 2, 1, bias=False),
             nn.BatchNorm2d(64),
             nn.ReLU(True),
+
             nn.ConvTranspose2d(64, 3, 4, 2, 1, bias=False),
             nn.Tanh()
         )
@@ -30,78 +48,70 @@ class Generator(nn.Module):
     def forward(self, x):
         return self.main(x)
 
+# ====================== Load Models from Checkpoint ======================
+@st.cache_resource
+def load_generator(checkpoint_path, model_name):
+    if not os.path.exists(checkpoint_path):
+        st.error(f"❌ Checkpoint not found: {checkpoint_path}")
+        st.stop()
 
-# ─── Load Models ──────────────────────────────────────────────────────────────
+    checkpoint = torch.load(checkpoint_path, map_location=device)
 
-DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-netG_DC = Generator().to(DEVICE)
-ckpt_dc = torch.load('dcgan_checkpoint.pth', map_location=DEVICE)
-netG_DC.load_state_dict(ckpt_dc['netG'])
-netG_DC.eval()
-print('DCGAN Generator loaded.')
-
-netG_WGAN = Generator().to(DEVICE)
-ckpt_wgan = torch.load('wgangp_checkpoint.pth', map_location=DEVICE)
-netG_WGAN.load_state_dict(ckpt_wgan['netG'])
-netG_WGAN.eval()
-print('WGAN-GP Generator loaded.')
-
-
-# ─── Inference ────────────────────────────────────────────────────────────────
-
-def tensor_to_pil_grid(fake_imgs, nrow=5):
-    grid    = vutils.make_grid(fake_imgs, nrow=nrow, padding=2, normalize=True)
-    grid_np = np.transpose(grid.cpu().numpy(), (1, 2, 0))
-    grid_np = (grid_np * 255).astype(np.uint8)
-    return Image.fromarray(grid_np)
-
-
-def generate(num_images, model_choice, seed):
-    torch.manual_seed(int(seed))
-    num_images = int(num_images)
-    noise = torch.randn(num_images, 100, 1, 1, device=DEVICE)
-
-    with torch.no_grad():
-        fake_dc   = netG_DC(noise).cpu()
-        fake_wgan = netG_WGAN(noise).cpu()
-
-    dc_img   = tensor_to_pil_grid(fake_dc,   nrow=num_images)
-    wgan_img = tensor_to_pil_grid(fake_wgan, nrow=num_images)
-
-    if model_choice == 'DCGAN':
-        return dc_img, None
-    elif model_choice == 'WGAN-GP':
-        return None, wgan_img
+    # Extract netG from checkpoint
+    if 'netG' in checkpoint:
+        state_dict = checkpoint['netG']
     else:
-        return dc_img, wgan_img
+        state_dict = checkpoint  # fallback if only state_dict was saved
 
+    model = Generator().to(device)
+    model.load_state_dict(state_dict)
+    model.eval()
 
-# ─── Gradio UI ────────────────────────────────────────────────────────────────
+    st.sidebar.success(f"✅ {model_name} loaded successfully!")
+    return model
 
-with gr.Blocks(theme=gr.themes.Soft(), title='Anime Face Generation — DCGAN vs WGAN-GP') as demo:
-    gr.Markdown('# Anime Face Generation — DCGAN vs WGAN-GP')
-    gr.Markdown(
-        'Generate anime faces using two GAN variants trained on the Anime Faces dataset. '
-        'Compare DCGAN and WGAN-GP outputs side by side.'
-    )
+# Load both models
+dcgan_model = load_generator("dcgan_checkpoint.pth", "DCGAN")
+wgan_model  = load_generator("wgangp_checkpoint.pth", "WGAN-GP")
 
-    with gr.Row():
-        num_images   = gr.Slider(1, 10, value=5, step=1, label='Number of Images')
-        model_choice = gr.Radio(['DCGAN', 'WGAN-GP', 'Both'], value='Both', label='Model')
-        seed         = gr.Number(value=42, label='Seed')
+# ====================== Preprocessing & Generation ======================
+transform = transforms.Compose([
+    transforms.Resize((64, 64)),
+    transforms.ToTensor(),
+    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+])
 
-    btn = gr.Button('Generate', variant='primary')
+def generate_images(generator, num_samples=4, latent_dim=100):
+    generator.eval()
+    with torch.no_grad():
+        noise = torch.randn(num_samples, latent_dim, 1, 1, device=device)
+        fake_imgs = generator(noise)
+        fake_imgs = (fake_imgs * 0.5 + 0.5).clamp(0, 1)
+        fake_imgs = fake_imgs.cpu().permute(0, 2, 3, 1).numpy()
+    return (fake_imgs * 255).astype(np.uint8)
 
-    with gr.Row():
-        out_dc   = gr.Image(label='DCGAN Output')
-        out_wgan = gr.Image(label='WGAN-GP Output')
+# ====================== Sidebar ======================
+st.sidebar.header("Generation Settings")
+model_choice = st.sidebar.radio("Select Model", ["DCGAN", "WGAN-GP"], index=1)
+num_samples = st.sidebar.slider("Number of Images", min_value=1, max_value=8, value=4)
 
-    btn.click(
-        fn=generate,
-        inputs=[num_images, model_choice, seed],
-        outputs=[out_dc, out_wgan]
-    )
+# ====================== Main App ======================
+if st.button("🎲 Generate New Anime Faces", type="primary"):
+    with st.spinner("Generating..."):
+        selected_model = dcgan_model if model_choice == "DCGAN" else wgan_model
+        images = generate_images(selected_model, num_samples=num_samples)
 
-if __name__ == '__main__':
-    demo.launch()
+        cols = st.columns(num_samples)
+        for i, img_array in enumerate(images):
+            pil_img = Image.fromarray(img_array)
+            with cols[i]:
+                st.image(pil_img, caption=f"Sample {i+1}", use_column_width=True)
+
+st.info("""
+**Note:**  
+- WGAN-GP usually produces better and more diverse results than DCGAN.  
+- Images are generated at **64×64** resolution (as trained).  
+- This demo uses the models trained in the "Tackling Mode Collapse" notebook.
+""")
+
+st.caption("Streamlit App for Tackling Mode Collapse in GANs")
